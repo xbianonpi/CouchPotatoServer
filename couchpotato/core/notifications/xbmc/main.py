@@ -13,7 +13,7 @@ class XBMC(Notification):
 
     listen_to = ['renamer.after']
     use_json_notifications = {}
-    couch_logo_url = 'https://raw.github.com/RuudBurger/CouchPotatoServer/master/couchpotato/static/images/xbmc-notify.png'
+    couch_logo_url = 'https://raw.github.com/xbianonpi/CouchPotatoServer/master/couchpotato/static/images/xbmc-notify.png'
 
     def notify(self, message = '', data = {}, listener = None):
         if self.isDisabled(): return

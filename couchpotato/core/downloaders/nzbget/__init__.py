@@ -21,13 +21,17 @@ config = [{
                 },
                 {
                     'name': 'host',
-                    'default': 'localhost:6789',
-                    'description': 'Hostname with port. Usually <strong>localhost:6789</strong>',
+                    'default': 'localhost:9092',
+                    'description': 'Hostname with port. Usually <strong>localhost:9092</strong>',
+                },
+                {
+                    'name': 'username',
+                    'description': 'Default NZBGet username is <i>xbian</i>',
                 },
                 {
                     'name': 'password',
                     'type': 'password',
-                    'description': 'Default NZBGet password is <i>tegbzn6789</i>',
+                    'description': 'Default NZBGet password is <i>raspberry</i>',
                 },
                 {
                     'name': 'category',
