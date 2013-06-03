@@ -117,7 +117,7 @@ class Updater(Plugin):
 
 class BaseUpdater(Plugin):
 
-    repo_user = 'xbianonpi'
+    repo_user = 'RuudBurger'
     repo_name = 'CouchPotatoServer'
     branch = version.BRANCH
 
