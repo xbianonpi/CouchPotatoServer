@@ -5,7 +5,7 @@ from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.request import jsonified, getParams, getParam
 from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
-from couchpotato.core.settings.model import Profile, ProfileType
+from couchpotato.core.settings.model import Profile, ProfileType, Movie
 
 log = CPLog(__name__)
 
@@ -30,6 +30,21 @@ class ProfilePlugin(Plugin):
         })
 
         addEvent('app.initialize', self.fill, priority = 90)
+        addEvent('app.load', self.forceDefaults)
+
+    def forceDefaults(self):
+
+        # Get all active movies without profile
+        active_status = fireEvent('status.get', 'active', single = True)
+
+        db = get_session()
+        movies = db.query(Movie).filter(Movie.status_id == active_status.get('id'), Movie.profile == None).all()
+
+        if len(movies) > 0:
+            default_profile = self.default()
+            for movie in movies:
+                movie.profile_id = default_profile.get('id')
+                db.commit()
 
     def allView(self):
 
@@ -47,6 +62,7 @@ class ProfilePlugin(Plugin):
         for profile in profiles:
             temp.append(profile.to_dict(self.to_dict))
 
+        db.expire_all()
         return temp
 
     def save(self):
@@ -94,6 +110,7 @@ class ProfilePlugin(Plugin):
         default = db.query(Profile).first()
         default_dict = default.to_dict(self.to_dict)
 
+        db.expire_all()
         return default_dict
 
     def saveOrder(self):
@@ -129,10 +146,14 @@ class ProfilePlugin(Plugin):
             db.delete(p)
             db.commit()
 
+            # Force defaults on all empty profile movies
+            self.forceDefaults()
+
             success = True
         except Exception, e:
             message = log.error('Failed deleting Profile: %s', e)
 
+        db.expire_all()
         return jsonified({
             'success': success,
             'message': message
