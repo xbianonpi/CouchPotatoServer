@@ -1,4 +1,4 @@
-from couchpotato.core.downloaders.base import Downloader, StatusList
+from couchpotato.core.downloaders.base import Downloader, ReleaseDownloadList
 from couchpotato.core.helpers.encoding import tryUrlencode, ss
 from couchpotato.core.helpers.variable import cleanHost, mergeDicts
 from couchpotato.core.logger import CPLog
@@ -6,15 +6,19 @@ from couchpotato.environment import Env
 from datetime import timedelta
 from urllib2 import URLError
 import json
+import os
 import traceback
 
 log = CPLog(__name__)
 
+
 class Sabnzbd(Downloader):
 
-    type = ['nzb']
+    protocol = ['nzb']
 
-    def download(self, data = {}, movie = {}, filedata = None):
+    def download(self, data = None, movie = None, filedata = None):
+        if not movie: movie = {}
+        if not data: data = {}
 
         log.info('Sending "%s" to SABnzbd.', data.get('name'))
 
@@ -22,11 +26,13 @@ class Sabnzbd(Downloader):
             'cat': self.conf('category'),
             'mode': 'addurl',
             'nzbname': self.createNzbName(data, movie),
+            'priority': self.conf('priority'),
         }
 
+        nzb_filename = None
         if filedata:
             if len(filedata) < 50:
-                log.error('No proper nzb available: %s', (filedata))
+                log.error('No proper nzb available: %s', filedata)
                 return False
 
             # If it's a .rar, it adds the .rar extension, otherwise it stays .nzb
@@ -36,7 +42,7 @@ class Sabnzbd(Downloader):
             req_params['name'] = data.get('url')
 
         try:
-            if req_params.get('mode') is 'addfile':
+            if nzb_filename and req_params.get('mode') is 'addfile':
                 sab_data = self.call(req_params, params = {'nzbfile': (ss(nzb_filename), filedata)}, multipart = True)
             else:
                 sab_data = self.call(req_params)
@@ -81,50 +87,77 @@ class Sabnzbd(Downloader):
             log.error('Failed getting history json: %s', traceback.format_exc(1))
             return False
 
-        statuses = StatusList(self)
+        release_downloads = ReleaseDownloadList(self)
 
         # Get busy releases
-        for item in queue.get('slots', []):
-            statuses.append({
-                'id': item['nzo_id'],
-                'name': item['filename'],
-                'original_status': item['status'],
-                'timeleft': item['timeleft'] if not queue['paused'] else -1,
+        for nzb in queue.get('slots', []):
+            status = 'busy'
+            if 'ENCRYPTED / ' in nzb['filename']:
+                status = 'failed'
+
+            release_downloads.append({
+                'id': nzb['nzo_id'],
+                'name': nzb['filename'],
+                'status': status,
+                'original_status': nzb['status'],
+                'timeleft': nzb['timeleft'] if not queue['paused'] else -1,
             })
 
         # Get old releases
-        for item in history.get('slots', []):
+        for nzb in history.get('slots', []):
 
             status = 'busy'
-            if item['status'] == 'Failed' or (item['status'] == 'Completed' and item['fail_message'].strip()):
+            if nzb['status'] == 'Failed' or (nzb['status'] == 'Completed' and nzb['fail_message'].strip()):
                 status = 'failed'
-            elif item['status'] == 'Completed':
+            elif nzb['status'] == 'Completed':
                 status = 'completed'
 
-            statuses.append({
-                'id': item['nzo_id'],
-                'name': item['name'],
+            release_downloads.append({
+                'id': nzb['nzo_id'],
+                'name': nzb['name'],
                 'status': status,
-                'original_status': item['status'],
+                'original_status': nzb['status'],
                 'timeleft': str(timedelta(seconds = 0)),
-                'folder': item['storage'],
+                'folder': os.path.dirname(ss(nzb['storage'])) if os.path.isfile(ss(nzb['storage'])) else ss(nzb['storage']),
             })
 
-        return statuses
+        return release_downloads
 
-    def removeFailed(self, item):
+    def removeFailed(self, release_download):
 
-        log.info('%s failed downloading, deleting...', item['name'])
+        log.info('%s failed downloading, deleting...', release_download['name'])
+
+        try:
+            self.call({
+                'mode': 'queue',
+                'name': 'delete',
+                'del_files': '1',
+                'value': release_download['id']
+            }, use_json = False)
+            self.call({
+                'mode': 'history',
+                'name': 'delete',
+                'del_files': '1',
+                'value': release_download['id']
+            }, use_json = False)
+        except:
+            log.error('Failed deleting: %s', traceback.format_exc(0))
+            return False
+
+        return True
+
+    def processComplete(self, release_download, delete_files = False):
+        log.debug('Requesting SabNZBd to remove the NZB %s.', release_download['name'])
 
         try:
             self.call({
                 'mode': 'history',
                 'name': 'delete',
-                'del_files': '1',
-                'value': item['id']
+                'del_files': '0',
+                'value': release_download['id']
             }, use_json = False)
         except:
-            log.error('Failed deleting: %s', traceback.format_exc(0))
+            log.error('Failed removing: %s', traceback.format_exc(0))
             return False
 
         return True

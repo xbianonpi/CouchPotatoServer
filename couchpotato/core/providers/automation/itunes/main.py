@@ -16,9 +16,6 @@ class ITunes(Automation, RSS):
 
     def getIMDBids(self):
 
-        if self.isDisabled():
-            return
-
         movies = []
 
         enablers = [tryInt(x) for x in splitString(self.conf('automation_urls_use'))]
@@ -31,7 +28,7 @@ class ITunes(Automation, RSS):
         for url in urls:
 
             index += 1
-            if not enablers[index]:
+            if len(enablers) == 0 or len(enablers) < index or not enablers[index]:
                 continue
 
             try:

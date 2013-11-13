@@ -5,9 +5,12 @@ from couchpotato.core.helpers.encoding import ss
 from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.core.plugins.scanner.main import Scanner
-from couchpotato.core.settings.model import File, Release as Relea, Movie
+from couchpotato.core.settings.model import File, Release as Relea, Media
+from sqlalchemy.orm import joinedload_all
 from sqlalchemy.sql.expression import and_, or_
 import os
+import time
+import traceback
 
 log = CPLog(__name__)
 
@@ -35,9 +38,49 @@ class Release(Plugin):
                 'id': {'type': 'id', 'desc': 'ID of the release object in release-table'}
             }
         })
+        addApiView('release.for_movie', self.forMovieView, docs = {
+            'desc': 'Returns all releases for a movie. Ordered by score(desc)',
+            'params': {
+                'id': {'type': 'id', 'desc': 'ID of the movie'}
+            }
+        })
 
+        addEvent('release.for_movie', self.forMovie)
         addEvent('release.delete', self.delete)
         addEvent('release.clean', self.clean)
+        addEvent('release.update_status', self.updateStatus)
+
+        # Clean releases that didn't have activity in the last week
+        addEvent('app.load', self.cleanDone)
+        fireEvent('schedule.interval', 'movie.clean_releases', self.cleanDone, hours = 4)
+
+    def cleanDone(self):
+
+        log.debug('Removing releases from dashboard')
+
+        now = time.time()
+        week = 262080
+
+        done_status, available_status, snatched_status, downloaded_status, ignored_status = \
+            fireEvent('status.get', ['done', 'available', 'snatched', 'downloaded', 'ignored'], single = True)
+
+        db = get_session()
+
+        # get movies last_edit more than a week ago
+        media = db.query(Media) \
+            .filter(Media.status_id == done_status.get('id'), Media.last_edit < (now - week)) \
+            .all()
+
+        for item in media:
+            for rel in item.releases:
+                # Remove all available releases
+                if rel.status_id in [available_status.get('id')]:
+                    fireEvent('release.delete', id = rel.id, single = True)
+                # Set all snatched and downloaded releases to ignored to make sure they are ignored when re-adding the move
+                elif rel.status_id in [snatched_status.get('id'), downloaded_status.get('id')]:
+                    fireEvent('release.update_status', id = rel.id, status = ignored_status)
+
+        db.expire_all()
 
     def add(self, group):
 
@@ -49,9 +92,9 @@ class Release(Plugin):
         done_status, snatched_status = fireEvent('status.get', ['done', 'snatched'], single = True)
 
         # Add movie
-        movie = db.query(Movie).filter_by(library_id = group['library'].get('id')).first()
+        movie = db.query(Media).filter_by(library_id = group['library'].get('id')).first()
         if not movie:
-            movie = Movie(
+            movie = Media(
                 library_id = group['library'].get('id'),
                 profile_id = 0,
                 status_id = done_status.get('id')
@@ -88,8 +131,8 @@ class Release(Plugin):
             added_files = db.query(File).filter(or_(*[File.id == x for x in added_files])).all()
             rel.files.extend(added_files)
             db.commit()
-        except Exception, e:
-            log.debug('Failed to attach "%s" to release: %s', (cur_file, e))
+        except:
+            log.debug('Failed to attach "%s" to release: %s', (added_files, traceback.format_exc()))
 
         fireEvent('movie.restatus', movie.id)
 
@@ -150,8 +193,7 @@ class Release(Plugin):
         rel = db.query(Relea).filter_by(id = id).first()
         if rel:
             ignored_status, failed_status, available_status = fireEvent('status.get', ['ignored', 'failed', 'available'], single = True)
-            rel.status_id = available_status.get('id') if rel.status_id in [ignored_status.get('id'), failed_status.get('id')] else ignored_status.get('id')
-            db.commit()
+            self.updateStatus(id, available_status if rel.status_id in [ignored_status.get('id'), failed_status.get('id')] else ignored_status)
 
         return {
             'success': True
@@ -174,7 +216,11 @@ class Release(Plugin):
             # Get matching provider
             provider = fireEvent('provider.belongs_to', item['url'], provider = item.get('provider'), single = True)
 
-            if item['type'] != 'torrent_magnet':
+            if not item.get('protocol'):
+                item['protocol'] = item['type']
+                item['type'] = 'movie'
+
+            if item.get('protocol') != 'torrent_magnet':
                 item['download'] = provider.loginDownload if provider.urls.get('login') else provider.download
 
             success = fireEvent('searcher.download', data = item, movie = rel.movie.to_dict({
@@ -186,14 +232,9 @@ class Release(Plugin):
 
             if success:
                 db.expunge_all()
-                rel = db.query(Relea).filter_by(id = id).first() # Get release again
-
-                if rel.status_id != done_status.get('id'):
-                    rel.status_id = snatched_status.get('id')
-                    db.commit()
+                rel = db.query(Relea).filter_by(id = id).first() # Get release again @RuudBurger why do we need to get it again??
 
                 fireEvent('notify.frontend', type = 'release.download', data = True, message = 'Successfully snatched "%s"' % item['name'])
-
             return {
                 'success': success
             }
@@ -203,3 +244,57 @@ class Release(Plugin):
         return {
             'success': False
         }
+
+    def forMovie(self, id = None):
+
+        db = get_session()
+
+        releases_raw = db.query(Relea) \
+            .options(joinedload_all('info')) \
+            .options(joinedload_all('files')) \
+            .filter(Relea.movie_id == id) \
+            .all()
+
+        releases = [r.to_dict({'info':{}, 'files':{}}) for r in releases_raw]
+        releases = sorted(releases, key = lambda k: k['info'].get('score', 0), reverse = True)
+
+        return releases
+
+    def forMovieView(self, id = None, **kwargs):
+
+        releases = self.forMovie(id)
+
+        return {
+            'releases': releases,
+            'success': True
+        }
+
+    def updateStatus(self, id, status = None):
+        if not status: return False
+
+        db = get_session()
+
+        rel = db.query(Relea).filter_by(id = id).first()
+        if rel and status and rel.status_id != status.get('id'):
+
+            item = {}
+            for info in rel.info:
+                item[info.identifier] = info.value
+
+            if rel.files:
+                for file_item in rel.files:
+                    if file_item.type.identifier == 'movie':
+                        release_name = os.path.basename(file_item.path)
+                        break
+            else:
+                release_name = item['name']
+            #update status in Db
+            log.debug('Marking release %s as %s', (release_name, status.get("label")))
+            rel.status_id = status.get('id')
+            rel.last_edit = int(time.time())
+            db.commit()
+
+            #Update all movie info as there is no release update function
+            fireEvent('notify.frontend', type = 'release.update_status.%s' % rel.id, data = status.get('id'))
+
+        return True

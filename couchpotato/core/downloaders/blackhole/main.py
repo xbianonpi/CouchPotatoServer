@@ -7,22 +7,25 @@ import traceback
 
 log = CPLog(__name__)
 
+
 class Blackhole(Downloader):
 
-    type = ['nzb', 'torrent', 'torrent_magnet']
+    protocol = ['nzb', 'torrent', 'torrent_magnet']
 
-    def download(self, data = {}, movie = {}, filedata = None):
+    def download(self, data = None, movie = None, filedata = None):
+        if not movie: movie = {}
+        if not data: data = {}
 
         directory = self.conf('directory')
         if not directory or not os.path.isdir(directory):
-            log.error('No directory set for blackhole %s download.', data.get('type'))
+            log.error('No directory set for blackhole %s download.', data.get('protocol'))
         else:
             try:
                 if not filedata or len(filedata) < 50:
                     try:
-                        if data.get('type') == 'torrent_magnet':
+                        if data.get('protocol') == 'torrent_magnet':
                             filedata = self.magnetToTorrent(data.get('url'))
-                            data['type'] = 'torrent'
+                            data['protocol'] = 'torrent'
                     except:
                         log.error('Failed download torrent via magnet url: %s', traceback.format_exc())
 
@@ -30,17 +33,27 @@ class Blackhole(Downloader):
                         log.error('No nzb/torrent available: %s', data.get('url'))
                         return False
 
-                fullPath = os.path.join(directory, self.createFileName(data, filedata, movie))
+                file_name = self.createFileName(data, filedata, movie)
+                full_path = os.path.join(directory, file_name)
+
+                if self.conf('create_subdir'):
+                    try:
+                        new_path = os.path.splitext(full_path)[0]
+                        if not os.path.exists(new_path):
+                            os.makedirs(new_path)
+                            full_path = os.path.join(new_path, file_name)
+                    except:
+                        log.error('Couldnt create sub dir, reverting to old one: %s', full_path)
 
                 try:
-                    if not os.path.isfile(fullPath):
-                        log.info('Downloading %s to %s.', (data.get('type'), fullPath))
-                        with open(fullPath, 'wb') as f:
+                    if not os.path.isfile(full_path):
+                        log.info('Downloading %s to %s.', (data.get('protocol'), full_path))
+                        with open(full_path, 'wb') as f:
                             f.write(filedata)
-                        os.chmod(fullPath, Env.getPermission('file'))
+                        os.chmod(full_path, Env.getPermission('file'))
                         return True
                     else:
-                        log.info('File %s already exists.', fullPath)
+                        log.info('File %s already exists.', full_path)
                         return True
 
                 except:
@@ -53,20 +66,21 @@ class Blackhole(Downloader):
 
         return False
 
-    def getEnabledDownloadType(self):
+    def getEnabledProtocol(self):
         if self.conf('use_for') == 'both':
-            return super(Blackhole, self).getEnabledDownloadType()
+            return super(Blackhole, self).getEnabledProtocol()
         elif self.conf('use_for') == 'torrent':
             return ['torrent', 'torrent_magnet']
         else:
             return ['nzb']
 
-    def isEnabled(self, manual, data = {}):
-        for_type = ['both']
-        if data and 'torrent' in data.get('type'):
-            for_type.append('torrent')
+    def isEnabled(self, manual = False, data = None):
+        if not data: data = {}
+        for_protocol = ['both']
+        if data and 'torrent' in data.get('protocol'):
+            for_protocol.append('torrent')
         elif data:
-            for_type.append(data.get('type'))
+            for_protocol.append(data.get('protocol'))
 
         return super(Blackhole, self).isEnabled(manual, data) and \
-            ((self.conf('use_for') in for_type))
+            ((self.conf('use_for') in for_protocol))

@@ -11,7 +11,8 @@ log = CPLog(__name__)
 def toSafeString(original):
     valid_chars = "-_.() %s%s" % (ascii_letters, digits)
     cleanedFilename = unicodedata.normalize('NFKD', toUnicode(original)).encode('ASCII', 'ignore')
-    return ''.join(c for c in cleanedFilename if c in valid_chars)
+    valid_string = ''.join(c for c in cleanedFilename if c in valid_chars)
+    return ' '.join(valid_string.split())
 
 def simplifyString(original):
     string = stripAccents(original.lower())
@@ -37,8 +38,14 @@ def toUnicode(original, *args):
         return toUnicode(ascii_text)
 
 def ss(original, *args):
-    from couchpotato.environment import Env
-    return toUnicode(original, *args).encode(Env.get('encoding'))
+
+    u_original = toUnicode(original, *args)
+    try:
+        from couchpotato.environment import Env
+        return u_original.encode(Env.get('encoding'))
+    except Exception, e:
+        log.debug('Failed ss encoding char, force UTF8: %s', e)
+        return u_original.encode('UTF-8')
 
 def ek(original, *args):
     if isinstance(original, (str, unicode)):
@@ -62,7 +69,7 @@ def stripAccents(s):
 
 def tryUrlencode(s):
     new = u''
-    if isinstance(s, (dict)):
+    if isinstance(s, dict):
         for key, value in s.iteritems():
             new += u'&%s=%s' % (key, tryUrlencode(value))
 

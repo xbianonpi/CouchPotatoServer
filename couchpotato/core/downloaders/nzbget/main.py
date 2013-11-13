@@ -1,5 +1,5 @@
 from base64 import standard_b64encode
-from couchpotato.core.downloaders.base import Downloader, StatusList
+from couchpotato.core.downloaders.base import Downloader, ReleaseDownloadList
 from couchpotato.core.helpers.encoding import ss
 from couchpotato.core.helpers.variable import tryInt, md5
 from couchpotato.core.logger import CPLog
@@ -12,13 +12,16 @@ import xmlrpclib
 
 log = CPLog(__name__)
 
+
 class NZBGet(Downloader):
 
-    type = ['nzb']
+    protocol = ['nzb']
 
     url = 'http://%(username)s:%(password)s@%(host)s/xmlrpc'
 
-    def download(self, data = {}, movie = {}, filedata = None):
+    def download(self, data = None, movie = None, filedata = None):
+        if not movie: movie = {}
+        if not data: data = {}
 
         if not filedata:
             log.error('Unable to get NZB file: %s', traceback.format_exc())
@@ -32,7 +35,7 @@ class NZBGet(Downloader):
         rpc = xmlrpclib.ServerProxy(url)
         try:
             if rpc.writelog('INFO', 'CouchPotato connected to drop off %s.' % nzb_name):
-                log.info('Successfully connected to NZBGet')
+                log.debug('Successfully connected to NZBGet')
             else:
                 log.info('Successfully connected to NZBGet, but unable to send a message')
         except socket.error:
@@ -73,7 +76,7 @@ class NZBGet(Downloader):
         rpc = xmlrpclib.ServerProxy(url)
         try:
             if rpc.writelog('INFO', 'CouchPotato connected to check status'):
-                log.info('Successfully connected to NZBGet')
+                log.debug('Successfully connected to NZBGet')
             else:
                 log.info('Successfully connected to NZBGet, but unable to send a message')
         except socket.error:
@@ -96,67 +99,67 @@ class NZBGet(Downloader):
             log.error('Failed getting data: %s', traceback.format_exc(1))
             return False
 
-        statuses = StatusList(self)
+        release_downloads = ReleaseDownloadList(self)
 
-        for item in groups:
-            log.debug('Found %s in NZBGet download queue', item['NZBFilename'])
+        for nzb in groups:
+            log.debug('Found %s in NZBGet download queue', nzb['NZBFilename'])
             try:
-                nzb_id = [param['Value'] for param in item['Parameters'] if param['Name'] == 'couchpotato'][0]
+                nzb_id = [param['Value'] for param in nzb['Parameters'] if param['Name'] == 'couchpotato'][0]
             except:
-                nzb_id = item['NZBID']
+                nzb_id = nzb['NZBID']
 
 
             timeleft = -1
             try:
-                if item['ActiveDownloads'] > 0 and item['DownloadRate'] > 0 and not (status['DownloadPaused'] or status['Download2Paused']):
-                    timeleft = str(timedelta(seconds = item['RemainingSizeMB'] / status['DownloadRate'] * 2 ^ 20))
+                if nzb['ActiveDownloads'] > 0 and nzb['DownloadRate'] > 0 and not (status['DownloadPaused'] or status['Download2Paused']):
+                    timeleft = str(timedelta(seconds = nzb['RemainingSizeMB'] / status['DownloadRate'] * 2 ^ 20))
             except:
                 pass
 
-            statuses.append({
+            release_downloads.append({
                 'id': nzb_id,
-                'name': item['NZBFilename'],
-                'original_status': 'DOWNLOADING' if item['ActiveDownloads'] > 0 else 'QUEUED',
+                'name': nzb['NZBFilename'],
+                'original_status': 'DOWNLOADING' if nzb['ActiveDownloads'] > 0 else 'QUEUED',
                 # Seems to have no native API function for time left. This will return the time left after NZBGet started downloading this item
                 'timeleft': timeleft,
             })
 
-        for item in queue: # 'Parameters' is not passed in rpc.postqueue
-            log.debug('Found %s in NZBGet postprocessing queue', item['NZBFilename'])
-            statuses.append({
-                'id': item['NZBID'],
-                'name': item['NZBFilename'],
-                'original_status': item['Stage'],
+        for nzb in queue: # 'Parameters' is not passed in rpc.postqueue
+            log.debug('Found %s in NZBGet postprocessing queue', nzb['NZBFilename'])
+            release_downloads.append({
+                'id': nzb['NZBID'],
+                'name': nzb['NZBFilename'],
+                'original_status': nzb['Stage'],
                 'timeleft': str(timedelta(seconds = 0)) if not status['PostPaused'] else -1,
             })
 
-        for item in history:
-            log.debug('Found %s in NZBGet history. ParStatus: %s, ScriptStatus: %s, Log: %s', (item['NZBFilename'] , item['ParStatus'], item['ScriptStatus'] , item['Log']))
+        for nzb in history:
+            log.debug('Found %s in NZBGet history. ParStatus: %s, ScriptStatus: %s, Log: %s', (nzb['NZBFilename'] , nzb['ParStatus'], nzb['ScriptStatus'] , nzb['Log']))
             try:
-                nzb_id = [param['Value'] for param in item['Parameters'] if param['Name'] == 'couchpotato'][0]
+                nzb_id = [param['Value'] for param in nzb['Parameters'] if param['Name'] == 'couchpotato'][0]
             except:
-                nzb_id = item['NZBID']
-            statuses.append({
+                nzb_id = nzb['NZBID']
+            release_downloads.append({
                 'id': nzb_id,
-                'name': item['NZBFilename'],
-                'status': 'completed' if item['ParStatus'] == 'SUCCESS' and item['ScriptStatus'] == 'SUCCESS' else 'failed',
-                'original_status': item['ParStatus'] + ', ' + item['ScriptStatus'],
+                'name': nzb['NZBFilename'],
+                'status': 'completed' if nzb['ParStatus'] in ['SUCCESS', 'NONE'] and nzb['ScriptStatus'] in ['SUCCESS', 'NONE'] else 'failed',
+                'original_status': nzb['ParStatus'] + ', ' + nzb['ScriptStatus'],
                 'timeleft': str(timedelta(seconds = 0)),
-                'folder': item['DestDir']
+                'folder': ss(nzb['DestDir'])
             })
 
-        return statuses
+        return release_downloads
 
-    def removeFailed(self, item):
+    def removeFailed(self, release_download):
 
-        log.info('%s failed downloading, deleting...', item['name'])
+        log.info('%s failed downloading, deleting...', release_download['name'])
 
-        url = self.url % {'host': self.conf('host'), 'password': self.conf('password')}
+        url = self.url % {'host': self.conf('host'), 'username': self.conf('username'), 'password': self.conf('password')}
 
         rpc = xmlrpclib.ServerProxy(url)
         try:
             if rpc.writelog('INFO', 'CouchPotato connected to delete some history'):
-                log.info('Successfully connected to NZBGet')
+                log.debug('Successfully connected to NZBGet')
             else:
                 log.info('Successfully connected to NZBGet, but unable to send a message')
         except socket.error:
@@ -171,11 +174,16 @@ class NZBGet(Downloader):
 
         try:
             history = rpc.history()
+            nzb_id = None
+            path = None
+
             for hist in history:
-                if hist['Parameters'] and hist['Parameters']['couchpotato'] and hist['Parameters']['couchpotato'] == item['id']:
-                    nzb_id = hist['ID']
-                    path = hist['DestDir']
-            if rpc.editqueue('HistoryDelete', 0, "", [tryInt(nzb_id)]):
+                for param in hist['Parameters']:
+                    if param['Name'] == 'couchpotato' and param['Value'] == release_download['id']:
+                        nzb_id = hist['ID']
+                        path = hist['DestDir']
+
+            if nzb_id and path and rpc.editqueue('HistoryDelete', 0, "", [tryInt(nzb_id)]):
                 shutil.rmtree(path, True)
         except:
             log.error('Failed deleting: %s', traceback.format_exc(0))

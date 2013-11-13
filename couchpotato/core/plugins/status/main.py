@@ -23,6 +23,8 @@ class StatusPlugin(Plugin):
         'ignored': 'Ignored',
         'available': 'Available',
         'suggest': 'Suggest',
+        'seeding': 'Seeding',
+        'missing': 'Missing',
     }
     status_cached = {}
 
@@ -74,7 +76,7 @@ class StatusPlugin(Plugin):
 
     def get(self, identifiers):
 
-        if not isinstance(identifiers, (list)):
+        if not isinstance(identifiers, list):
             identifiers = [identifiers]
 
         db = get_session()
