@@ -1,11 +1,11 @@
-from couchpotato.core.event import addEvent
+from couchpotato.core.event import addEvent, fireEvent
 from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import getTitle, splitString
 from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.core.plugins.score.scores import nameScore, nameRatioScore, \
     sizeScore, providerScore, duplicateScore, partialIgnoredScore, namePositionScore, \
-    halfMultipartScore
+    halfMultipartScore, sceneScore
 from couchpotato.environment import Env
 
 log = CPLog(__name__)
@@ -35,8 +35,8 @@ class Score(Plugin):
         # Torrents only
         if nzb.get('seeders'):
             try:
-                score += nzb.get('seeders') / 5
-                score += nzb.get('leechers') / 10
+                score += nzb.get('seeders') * 100 / 15
+                score += nzb.get('leechers') * 100 / 30
             except:
                 pass
 
@@ -61,5 +61,8 @@ class Score(Plugin):
         extra_score = nzb.get('extra_score')
         if extra_score:
             score += extra_score(nzb)
+
+        # Scene / Nuke scoring
+        score += sceneScore(nzb['name'])
 
         return score
