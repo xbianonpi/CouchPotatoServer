@@ -17,8 +17,11 @@ import re
 import shutil
 import time
 import traceback
+import six
+from six.moves import filter
 
 log = CPLog(__name__)
+
 
 class Renamer(Plugin):
 
@@ -33,7 +36,7 @@ class Renamer(Plugin):
                 'media_folder': {'desc': 'Optional: The folder of the media to scan. Keep empty for default renamer folder.'},
                 'files': {'desc': 'Optional: Provide the release files if more releases are in the same media_folder, delimited with a \'|\'. Note that no dedicated release folder is expected for releases with one file.'},
                 'base_folder': {'desc': 'Optional: The folder to find releases in. Leave empty for default folder.'},
-                'downloader' : {'desc': 'Optional: The downloader the release has been downloaded with. \'download_id\' is required with this option.'},
+                'downloader': {'desc': 'Optional: The downloader the release has been downloaded with. \'download_id\' is required with this option.'},
                 'download_id': {'desc': 'Optional: The nzb/torrent ID of the release in media_folder. \'downloader\' is required with this option.'},
                 'status': {'desc': 'Optional: The status of the release: \'completed\' (default) or \'seeding\''},
             },
@@ -274,25 +277,25 @@ class Renamer(Plugin):
                     name_the = movie_name[4:] + ', The'
 
                 replacements = {
-                     'ext': 'mkv',
-                     'namethe': name_the.strip(),
-                     'thename': movie_name.strip(),
-                     'year': library['year'],
-                     'first': name_the[0].upper(),
-                     'quality': group['meta_data']['quality']['label'],
-                     'quality_type': group['meta_data']['quality_type'],
-                     'video': group['meta_data'].get('video'),
-                     'audio': group['meta_data'].get('audio'),
-                     'group': group['meta_data']['group'],
-                     'source': group['meta_data']['source'],
-                     'resolution_width': group['meta_data'].get('resolution_width'),
-                     'resolution_height': group['meta_data'].get('resolution_height'),
-                     'audio_channels': group['meta_data'].get('audio_channels'),
-                     'imdb_id': library['identifier'],
-                     'cd': '',
-                     'cd_nr': '',
-                     'mpaa': library['info'].get('mpaa', ''),
-                     'category': category_label,
+                    'ext': 'mkv',
+                    'namethe': name_the.strip(),
+                    'thename': movie_name.strip(),
+                    'year': library['year'],
+                    'first': name_the[0].upper(),
+                    'quality': group['meta_data']['quality']['label'],
+                    'quality_type': group['meta_data']['quality_type'],
+                    'video': group['meta_data'].get('video'),
+                    'audio': group['meta_data'].get('audio'),
+                    'group': group['meta_data']['group'],
+                    'source': group['meta_data']['source'],
+                    'resolution_width': group['meta_data'].get('resolution_width'),
+                    'resolution_height': group['meta_data'].get('resolution_height'),
+                    'audio_channels': group['meta_data'].get('audio_channels'),
+                    'imdb_id': library['identifier'],
+                    'cd': '',
+                    'cd_nr': '',
+                    'mpaa': library['info'].get('mpaa', ''),
+                    'category': category_label,
                 }
 
                 for file_type in group['files']:
@@ -314,7 +317,7 @@ class Renamer(Plugin):
                     cd = 1 if multiple else 0
 
                     for current_file in sorted(list(group['files'][file_type])):
-                        current_file = toUnicode(current_file)
+                        current_file = sp(current_file)
 
                         # Original filename
                         replacements['original'] = os.path.splitext(os.path.basename(current_file))[0]
@@ -434,8 +437,9 @@ class Renamer(Plugin):
                                     movie.status_id = done_status.get('id')
                                     movie.last_edit = int(time.time())
                                     db.commit()
-                    except Exception, e:
+                    except Exception as e:
                         log.error('Failed marking movie finished: %s %s', (e, traceback.format_exc()))
+                        db.rollback()
 
                     # Go over current movie releases
                     for release in movie.releases:
@@ -526,7 +530,7 @@ class Renamer(Plugin):
             for delete_folder in delete_folders:
                 try:
                     self.deleteEmptyFolder(delete_folder, show_error = False)
-                except Exception, e:
+                except Exception as e:
                     log.error('Failed to delete folder: %s %s', (e, traceback.format_exc()))
 
             # Rename all files marked
@@ -592,7 +596,7 @@ class Renamer(Plugin):
             # Break if CP wants to shut down
             if self.shuttingDown():
                 break
- 
+
         self.renaming_started = False
 
     def getRenameExtras(self, extra_type = '', replacements = None, folder_name = '', file_name = '', destination = '', group = None, current_file = '', remove_multiple = False):
@@ -603,7 +607,7 @@ class Renamer(Plugin):
         rename_files = {}
 
         def test(s):
-            return current_file[:-len(replacements['ext'])] in s
+            return current_file[:-len(replacements['ext'])] in sp(s)
 
         for extra in set(filter(test, group['files'][extra_type])):
             replacements['ext'] = getExt(extra)
@@ -732,8 +736,15 @@ Remove it if you want it to be renamed (again, or at least let it try again)
     def moveFile(self, old, dest, forcemove = False):
         dest = ss(dest)
         try:
-            if forcemove:
-                shutil.move(old, dest)
+            if forcemove or self.conf('file_action') not in ['copy', 'link']:
+                try:
+                    shutil.move(old, dest)
+                except:
+                    if os.path.exists(dest):
+                        log.error('Successfully moved file "%s", but something went wrong: %s', (dest, traceback.format_exc()))
+                        os.unlink(old)
+                    else:
+                        raise
             elif self.conf('file_action') == 'copy':
                 shutil.copy(old, dest)
             elif self.conf('file_action') == 'link':
@@ -751,8 +762,6 @@ Remove it if you want it to be renamed (again, or at least let it try again)
                         os.rename(old + '.link', old)
                     except:
                         log.error('Couldn\'t symlink file "%s" to "%s". Copied instead. Error: %s. ', (old, dest, traceback.format_exc()))
-            else:
-                shutil.move(old, dest)
 
             try:
                 os.chmod(dest, Env.getPermission('file'))
@@ -760,15 +769,6 @@ Remove it if you want it to be renamed (again, or at least let it try again)
                     os.popen('icacls "' + dest + '"* /reset /T')
             except:
                 log.error('Failed setting permissions for file: %s, %s', (dest, traceback.format_exc(1)))
-
-        except OSError, err:
-            # Copying from a filesystem with octal permission to an NTFS file system causes a permission error.  In this case ignore it.
-            if not hasattr(os, 'chmod') or err.errno != errno.EPERM:
-                raise
-            else:
-                if os.path.exists(dest):
-                    os.unlink(old)
-
         except:
             log.error('Couldn\'t move file "%s" to "%s": %s', (old, dest, traceback.format_exc()))
             raise
@@ -786,19 +786,19 @@ Remove it if you want it to be renamed (again, or at least let it try again)
             replacements['cd_nr'] = ''
 
         replaced = toUnicode(string)
-        for x, r in replacements.iteritems():
+        for x, r in replacements.items():
             if x in ['thename', 'namethe']:
                 continue
             if r is not None:
-                replaced = replaced.replace(u'<%s>' % toUnicode(x), toUnicode(r))
+                replaced = replaced.replace(six.u('<%s>') % toUnicode(x), toUnicode(r))
             else:
                 #If information is not available, we don't want the tag in the filename
                 replaced = replaced.replace('<' + x + '>', '')
 
         replaced = self.replaceDoubles(replaced.lstrip('. '))
-        for x, r in replacements.iteritems():
+        for x, r in replacements.items():
             if x in ['thename', 'namethe']:
-                replaced = replaced.replace(u'<%s>' % toUnicode(x), toUnicode(r))
+                replaced = replaced.replace(six.u('<%s>') % toUnicode(x), toUnicode(r))
         replaced = re.sub(r"[\x00:\*\?\"<>\|]", '', replaced)
 
         sep = self.conf('foldersep') if folder else self.conf('separator')
@@ -1123,29 +1123,9 @@ Remove it if you want it to be renamed (again, or at least let it try again)
 
             # Check if archive is fresh and maybe still copying/moving/downloading, ignore files newer than 1 minute
             if check_file_date:
-                file_too_new = False
-                for cur_file in archive['files']:
-                    if not os.path.isfile(cur_file):
-                        file_too_new = time.time()
-                        break
-                    file_time = [os.path.getmtime(cur_file), os.path.getctime(cur_file)]
-                    for t in file_time:
-                        if t > time.time() - 60:
-                            file_too_new = tryInt(time.time() - t)
-                            break
+                files_too_new, time_string = self.checkFilesChanged(archive['files'])
 
-                    if file_too_new:
-                        break
-
-                if file_too_new:
-                    try:
-                        time_string = time.ctime(file_time[0])
-                    except:
-                        try:
-                            time_string = time.ctime(file_time[1])
-                        except:
-                            time_string = 'unknown'
-
+                if files_too_new:
                     log.info('Archive seems to be still copying/moving/downloading or just copied/moved/downloaded (created on %s), ignoring for now: %s', (time_string, os.path.basename(archive['file'])))
                     continue
 
@@ -1160,7 +1140,7 @@ Remove it if you want it to be renamed (again, or at least let it try again)
                         rar_handle.extract(condition = [packedinfo.index], path = extr_path, withSubpath = False, overwrite = False)
                         extr_files.append(sp(os.path.join(extr_path, os.path.basename(packedinfo.filename))))
                 del rar_handle
-            except Exception, e:
+            except Exception as e:
                 log.error('Failed to extract %s: %s %s', (archive['file'], e, traceback.format_exc()))
                 continue
 
@@ -1169,7 +1149,7 @@ Remove it if you want it to be renamed (again, or at least let it try again)
                 if cleanup:
                     try:
                         os.remove(filename)
-                    except Exception, e:
+                    except Exception as e:
                         log.error('Failed to remove %s: %s %s', (filename, e, traceback.format_exc()))
                         continue
                 files.remove(filename)
@@ -1182,7 +1162,7 @@ Remove it if you want it to be renamed (again, or at least let it try again)
                 try:
                     self.makeDir(os.path.dirname(move_to))
                     self.moveFile(leftoverfile, move_to, cleanup)
-                except Exception, e:
+                except Exception as e:
                     log.error('Failed moving left over file %s to %s: %s %s', (leftoverfile, move_to, e, traceback.format_exc()))
                     # As we probably tried to overwrite the nfo file, check if it exists and then remove the original
                     if os.path.isfile(move_to):

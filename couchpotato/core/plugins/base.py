@@ -1,7 +1,7 @@
 from couchpotato.core.event import fireEvent, addEvent
 from couchpotato.core.helpers.encoding import ss, toSafeString, \
     toUnicode, sp
-from couchpotato.core.helpers.variable import getExt, md5, isLocalIP
+from couchpotato.core.helpers.variable import getExt, md5, isLocalIP, scanForPassword, tryInt
 from couchpotato.core.logger import CPLog
 from couchpotato.environment import Env
 import requests
@@ -85,7 +85,7 @@ class Plugin(object):
         class_name = re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
 
         # View path
-        path = 'static/plugin/%s/' % (class_name)
+        path = 'static/plugin/%s/' % class_name
 
         # Add handler to Tornado
         Env.get('app').add_handlers(".*$", [(Env.get('web_base') + path + '(.*)', StaticFileHandler, {'path': static_folder})])
@@ -110,7 +110,7 @@ class Plugin(object):
             f.write(content)
             f.close()
             os.chmod(path, Env.getPermission('file'))
-        except Exception, e:
+        except:
             log.error('Unable writing to file "%s": %s', (path, traceback.format_exc()))
             if os.path.isfile(path):
                 os.remove(path)
@@ -121,7 +121,7 @@ class Plugin(object):
             if not os.path.isdir(path):
                 os.makedirs(path, Env.getPermission('folder'))
             return True
-        except Exception, e:
+        except Exception as e:
             log.error('Unable to create folder "%s": %s', (path, e))
 
         return False
@@ -169,10 +169,13 @@ class Plugin(object):
             }
             method = 'post' if len(data) > 0 or files else 'get'
 
-            log.info('Opening url: %s %s, data: %s', (method, url, [x for x in data.iterkeys()] if isinstance(data, dict) else 'with data'))
+            log.info('Opening url: %s %s, data: %s', (method, url, [x for x in data.keys()] if isinstance(data, dict) else 'with data'))
             response = r.request(method, url, verify = False, **kwargs)
 
-            data = response.content
+            if response.status_code == requests.codes.ok:
+                data = response.content
+            else:
+                response.raise_for_status()
 
             self.http_failed_request[host] = 0
         except (IOError, MaxRetryError, Timeout):
@@ -243,24 +246,27 @@ class Plugin(object):
             except:
                 log.error("Something went wrong when finishing the plugin function. Could not find the 'is_running' key")
 
-
     def getCache(self, cache_key, url = None, **kwargs):
-        cache_key_md5 = md5(cache_key)
-        cache = Env.get('cache').get(cache_key_md5)
-        if cache:
-            if not Env.get('dev'): log.debug('Getting cache %s', cache_key)
-            return cache
+
+        use_cache = not len(kwargs.get('data', {})) > 0 and not kwargs.get('files')
+
+        if use_cache:
+            cache_key_md5 = md5(cache_key)
+            cache = Env.get('cache').get(cache_key_md5)
+            if cache:
+                if not Env.get('dev'): log.debug('Getting cache %s', cache_key)
+                return cache
 
         if url:
             try:
 
                 cache_timeout = 300
-                if kwargs.has_key('cache_timeout'):
+                if 'cache_timeout' in kwargs:
                     cache_timeout = kwargs.get('cache_timeout')
                     del kwargs['cache_timeout']
 
                 data = self.urlopen(url, **kwargs)
-                if data and cache_timeout > 0:
+                if data and cache_timeout > 0 and use_cache:
                     self.setCache(cache_key, data, timeout = cache_timeout)
                 return data
             except:
@@ -277,11 +283,20 @@ class Plugin(object):
         return value
 
     def createNzbName(self, data, media):
+        release_name = data.get('name')
         tag = self.cpTag(media)
-        return '%s%s' % (toSafeString(toUnicode(data.get('name'))[:127 - len(tag)]), tag)
+
+        # Check if password is filename
+        name_password = scanForPassword(data.get('name'))
+        if name_password:
+            release_name, password = name_password
+            tag += '{{%s}}' % password
+
+        max_length = 127 - len(tag) # Some filesystems don't support 128+ long filenames
+        return '%s%s' % (toSafeString(toUnicode(release_name)[:max_length]), tag)
 
     def createFileName(self, data, filedata, media):
-        name = sp(os.path.join(self.createNzbName(data, media)))
+        name = self.createNzbName(data, media)
         if data.get('protocol') == 'nzb' and 'DOCTYPE nzb' not in filedata and '</nzb>' not in filedata:
             return '%s.%s' % (name, 'rar')
         return '%s.%s' % (name, data.get('protocol'))
@@ -291,6 +306,43 @@ class Plugin(object):
             return '.cp(' + media['library'].get('identifier') + ')' if media['library'].get('identifier') else ''
 
         return ''
+
+    def checkFilesChanged(self, files, unchanged_for = 60):
+        now = time.time()
+        file_too_new = False
+
+        for cur_file in files:
+
+            # File got removed while checking
+            if not os.path.isfile(cur_file):
+                file_too_new = now
+                break
+
+            # File has changed in last 60 seconds
+            file_time = self.getFileTimes(cur_file)
+            for t in file_time:
+                if t > now - unchanged_for:
+                    file_too_new = tryInt(time.time() - t)
+                    break
+
+            if file_too_new:
+                break
+
+        if file_too_new:
+            try:
+                time_string = time.ctime(file_time[0])
+            except:
+                try:
+                    time_string = time.ctime(file_time[1])
+                except:
+                    time_string = 'unknown'
+
+            return file_too_new, time_string
+
+        return False, None
+
+    def getFileTimes(self, file_path):
+        return [os.path.getmtime(file_path), os.path.getctime(file_path) if os.name != 'posix' else 0]
 
     def isDisabled(self):
         return not self.isEnabled()

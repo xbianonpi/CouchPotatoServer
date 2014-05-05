@@ -1,14 +1,15 @@
-from base64 import b16encode, b32decode
-from bencode import bencode, bdecode
 from couchpotato.core.downloaders.base import Downloader, ReleaseDownloadList
 from couchpotato.core.event import fireEvent, addEvent
 from couchpotato.core.helpers.encoding import sp
 from couchpotato.core.helpers.variable import cleanHost, splitString
 from couchpotato.core.logger import CPLog
+from base64 import b16encode, b32decode
+from bencode import bencode, bdecode
 from datetime import timedelta
 from hashlib import sha1
 from rtorrent import RTorrent
 from rtorrent.err import MethodError
+from urlparse import urlparse
 import os
 
 log = CPLog(__name__)
@@ -18,12 +19,14 @@ class rTorrent(Downloader):
 
     protocol = ['torrent', 'torrent_magnet']
     rt = None
+    error_msg = ''
 
     # Migration url to host options
     def __init__(self):
         super(rTorrent, self).__init__()
 
         addEvent('app.load', self.migrate)
+        addEvent('setting.save.rtorrent.*.after', self.settingsChanged)
 
     def migrate(self):
 
@@ -37,12 +40,25 @@ class rTorrent(Downloader):
 
             self.deleteConf('url')
 
-    def connect(self):
+    def settingsChanged(self):
+        # Reset active connection if settings have changed
+        if self.rt:
+            log.debug('Settings have changed, closing active connection')
+
+        self.rt = None
+        return True
+
+    def connect(self, reconnect = False):
         # Already connected?
-        if self.rt is not None:
+        if not reconnect and self.rt is not None:
             return self.rt
 
-        url = cleanHost(self.conf('host'), protocol = True, ssl = self.conf('ssl')) + '/' + self.conf('rpc_url').strip('/ ') + '/'
+        url = cleanHost(self.conf('host'), protocol = True, ssl = self.conf('ssl'))
+        parsed = urlparse(url)
+
+        # rpc_url is only used on http/https scgi pass-through
+        if parsed.scheme in ['http', 'https']:
+            url += self.conf('rpc_url')
 
         if self.conf('username') and self.conf('password'):
             self.rt = RTorrent(
@@ -53,9 +69,25 @@ class rTorrent(Downloader):
         else:
             self.rt = RTorrent(url)
 
+        self.error_msg = ''
+        try:
+             self.rt._verify_conn()
+        except AssertionError as e:
+             self.error_msg = e.message
+             self.rt = None
+
         return self.rt
 
-    def _update_provider_group(self, name, data):
+    def test(self):
+        if self.connect(True):
+            return True
+
+        if self.error_msg:
+            return False, 'Connection failed: ' + self.error_msg
+
+        return False
+
+    def updateProviderGroup(self, name, data):
         if data.get('seed_time'):
             log.info('seeding time ignored, not supported')
 
@@ -87,7 +119,7 @@ class rTorrent(Downloader):
                 # Reset group action and disable it
                 group.set_command()
                 group.disable()
-        except MethodError, err:
+        except MethodError as err:
             log.error('Unable to set group options: %s', err.msg)
             return False
 
@@ -104,13 +136,12 @@ class rTorrent(Downloader):
             return False
 
         group_name = 'cp_' + data.get('provider').lower()
-        if not self._update_provider_group(group_name, data):
+        if not self.updateProviderGroup(group_name, data):
             return False
 
         torrent_params = {}
         if self.conf('label'):
             torrent_params['label'] = self.conf('label')
-
 
         if not filedata and data.get('protocol') == 'torrent':
             log.error('Failed sending torrent, no data')
@@ -135,7 +166,7 @@ class rTorrent(Downloader):
         # Send request to rTorrent
         try:
             # Send torrent to rTorrent
-            torrent = self.rt.load_torrent(filedata)
+            torrent = self.rt.load_torrent(filedata, verify_retries=10)
 
             if not torrent:
                 log.error('Unable to find the torrent, did it fail to load?')
@@ -156,9 +187,24 @@ class rTorrent(Downloader):
                 torrent.start()
 
             return self.downloadReturnId(torrent_hash)
-        except Exception, err:
+        except Exception as err:
             log.error('Failed to send torrent to rTorrent: %s', err)
             return False
+
+    def getTorrentStatus(self, torrent):
+        if torrent.hashing or torrent.hash_checking or torrent.message:
+            return 'busy'
+
+        if not torrent.complete:
+            return 'busy'
+
+        if not torrent.open:
+            return 'completed'
+
+        if torrent.state and torrent.active:
+            return 'seeding'
+
+        return 'busy'
 
     def getAllDownloadStatus(self, ids):
         log.debug('Checking rTorrent download status.')
@@ -173,21 +219,21 @@ class rTorrent(Downloader):
 
             for torrent in torrents:
                 if torrent.info_hash in ids:
+                    torrent_directory = os.path.normpath(torrent.directory)
                     torrent_files = []
-                    for file_item in torrent.get_files():
-                        torrent_files.append(sp(os.path.join(torrent.directory, file_item.path)))
 
-                    status = 'busy'
-                    if torrent.complete:
-                        if torrent.active:
-                            status = 'seeding'
+                    for file in torrent.get_files():
+                        if not os.path.normpath(file.path).startswith(torrent_directory):
+                            file_path = os.path.join(torrent_directory, file.path.lstrip('/'))
                         else:
-                            status = 'completed'
+                            file_path = file.path
+
+                        torrent_files.append(sp(file_path))
 
                     release_downloads.append({
                         'id': torrent.info_hash,
                         'name': torrent.name,
-                        'status': status,
+                        'status': self.getTorrentStatus(torrent),
                         'seed_ratio': torrent.ratio,
                         'original_status': torrent.state,
                         'timeleft': str(timedelta(seconds = float(torrent.left_bytes) / torrent.down_rate)) if torrent.down_rate > 0 else -1,
@@ -197,7 +243,7 @@ class rTorrent(Downloader):
 
             return release_downloads
 
-        except Exception, err:
+        except Exception as err:
             log.error('Failed to get status from rTorrent: %s', err)
             return []
 

@@ -49,13 +49,14 @@ class ClientScript(Plugin):
             'scripts/page/settings.js',
             'scripts/page/about.js',
             'scripts/page/manage.js',
+            'scripts/misc/downloaders.js',
         ],
     }
 
 
-    urls = {'style': {}, 'script': {}, }
-    minified = {'style': {}, 'script': {}, }
-    paths = {'style': {}, 'script': {}, }
+    urls = {'style': {}, 'script': {}}
+    minified = {'style': {}, 'script': {}}
+    paths = {'style': {}, 'script': {}}
     comment = {
        'style': '/*** %s:%d ***/\n',
        'script': '// %s:%d\n'

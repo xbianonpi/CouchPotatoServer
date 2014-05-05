@@ -1,5 +1,6 @@
 from __future__ import with_statement
 from couchpotato.core.downloaders.base import Downloader
+from couchpotato.core.helpers.encoding import sp
 from couchpotato.core.logger import CPLog
 import os
 import traceback
@@ -26,26 +27,26 @@ class Pneumatic(Downloader):
                     log.error('No nzb available!')
                     return False
 
-                fullPath = os.path.join(directory, self.createFileName(data, filedata, media))
+                full_path = os.path.join(directory, self.createFileName(data, filedata, media))
 
                 try:
-                    if not os.path.isfile(fullPath):
-                        log.info('Downloading %s to %s.', (data.get('protocol'), fullPath))
-                        with open(fullPath, 'wb') as f:
+                    if not os.path.isfile(full_path):
+                        log.info('Downloading %s to %s.', (data.get('protocol'), full_path))
+                        with open(full_path, 'wb') as f:
                             f.write(filedata)
 
                         nzb_name = self.createNzbName(data, media)
                         strm_path = os.path.join(directory, nzb_name)
 
                         strm_file = open(strm_path + '.strm', 'wb')
-                        strmContent = self.strm_syntax % (fullPath, nzb_name)
+                        strmContent = self.strm_syntax % (full_path, nzb_name)
                         strm_file.write(strmContent)
                         strm_file.close()
 
                         return self.downloadReturnId('')
 
                     else:
-                        log.info('File %s already exists.', fullPath)
+                        log.info('File %s already exists.', full_path)
                         return self.downloadReturnId('')
 
                 except:
@@ -55,4 +56,18 @@ class Pneumatic(Downloader):
             except:
                 log.info('Failed to download file %s: %s', (data.get('name'), traceback.format_exc()))
                 return False
+        return False
+
+    def test(self):
+        directory = self.conf('directory')
+        if directory and os.path.isdir(directory):
+
+            test_file = sp(os.path.join(directory, 'couchpotato_test.txt'))
+
+            # Check if folder is writable
+            self.createFile(test_file, 'This is a test file')
+            if os.path.isfile(test_file):
+                os.remove(test_file)
+                return True
+
         return False
