@@ -1,7 +1,8 @@
-diff '--exclude=.git' -ur old/CouchPotatoServer/couchpotato/core/downloaders/nzbget/__init__.py new/CouchPotatoServer/couchpotato/core/downloaders/nzbget/__init__.py
---- CouchPotatoServer/couchpotato/core/downloaders/nzbget/__init__.py	2013-05-27 10:55:02.707473451 +0200
-+++ CouchPotatoServer/couchpotato/core/downloaders/nzbget/__init__.py	2013-05-27 11:00:26.487823480 +0200
-@@ -21,19 +21,18 @@
+diff --git a/couchpotato/core/downloaders/nzbget.py b/couchpotato/core/downloaders/nzbget.py
+index b46de77..b8626af 100644
+--- a/couchpotato/core/downloaders/nzbget.py
++++ b/couchpotato/core/downloaders/nzbget.py
+@@ -239,8 +239,8 @@ config = [{
                  },
                  {
                      'name': 'host',
@@ -9,6 +10,10 @@ diff '--exclude=.git' -ur old/CouchPotatoServer/couchpotato/core/downloaders/nzb
 -                    'description': 'Hostname with port. Usually <strong>localhost:6789</strong>',
 +                    'default': 'localhost:9092',
 +                    'description': 'Hostname with port. Usually <strong>localhost:9092</strong>',
+                 },
+                 {
+                     'name': 'ssl',
+@@ -251,14 +251,13 @@ config = [{
                  },
                  {
                      'name': 'username',
