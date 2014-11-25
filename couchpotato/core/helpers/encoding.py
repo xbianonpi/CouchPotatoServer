@@ -1,11 +1,14 @@
-from couchpotato.core.logger import CPLog
 from string import ascii_letters, digits
 from urllib import quote_plus
 import os
 import re
 import traceback
 import unicodedata
+
+from chardet import detect
+from couchpotato.core.logger import CPLog
 import six
+
 
 log = CPLog(__name__)
 
@@ -33,6 +36,9 @@ def toUnicode(original, *args):
                 return six.text_type(original, *args)
             except:
                 try:
+                    detected = detect(original)
+                    if detected.get('encoding') == 'utf-8':
+                        return original.decode('utf-8')
                     return ek(original, *args)
                 except:
                     raise
@@ -50,7 +56,10 @@ def ss(original, *args):
         return u_original.encode(Env.get('encoding'))
     except Exception as e:
         log.debug('Failed ss encoding char, force UTF8: %s', e)
-        return u_original.encode('UTF-8')
+        try:
+            return u_original.encode(Env.get('encoding'), 'replace')
+        except:
+            return u_original.encode('utf-8', 'replace')
 
 
 def sp(path, *args):
