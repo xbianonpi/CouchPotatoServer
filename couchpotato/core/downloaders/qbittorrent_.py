@@ -1,6 +1,8 @@
 from base64 import b16encode, b32decode
 from hashlib import sha1
+from datetime import timedelta
 import os
+import re
 
 from bencode import bencode, bdecode
 from couchpotato.core._base.downloader.main import DownloaderBase, ReleaseDownloadList
@@ -25,28 +27,39 @@ class qBittorrent(DownloaderBase):
 
     def connect(self):
         if self.qb is not None:
-            return self.qb
+            self.qb.logout()
 
         url = cleanHost(self.conf('host'), protocol = True, ssl = False)
 
         if self.conf('username') and self.conf('password'):
-            self.qb = QBittorrentClient(
-                url,
-                username = self.conf('username'),
-                password = self.conf('password')
-            )
+            self.qb = QBittorrentClient(url)
+            self.qb.login(username=self.conf('username'), password=self.conf('password'))
         else:
             self.qb = QBittorrentClient(url)
 
-        return self.qb
+        return self.qb._is_authenticated
 
     def test(self):
-        if self.connect():
-            return True
-
-        return False
+        """ Check if connection works
+        :return: bool
+        """
+        return self.connect()
 
     def download(self, data = None, media = None, filedata = None):
+        """ Send a torrent/nzb file to the downloader
+
+        :param data: dict returned from provider
+            Contains the release information
+        :param media: media dict with information
+            Used for creating the filename when possible
+        :param filedata: downloaded torrent/nzb filedata
+            The file gets downloaded in the searcher and send to this function
+            This is done to have failed checking before using the downloader, so the downloader
+            doesn't need to worry about that
+        :return: boolean
+            One faile returns false, but the downloaded should log his own errors
+        """
+
         if not media: media = {}
         if not data: data = {}
 
@@ -59,82 +72,93 @@ class qBittorrent(DownloaderBase):
             log.error('Failed sending torrent, no data')
             return False
 
-
         if data.get('protocol') == 'torrent_magnet':
-            filedata = self.magnetToTorrent(data.get('url'))
+            # Send request to qBittorrent directly as a magnet
+            try:
+                self.qb.download_from_link(data.get('url'), label=self.conf('label'))
+                torrent_hash = re.findall('urn:btih:([\w]{32,40})', data.get('url'))[0].upper()
+                log.info('Torrent [magnet] sent to QBittorrent successfully.')
+                return self.downloadReturnId(torrent_hash)
 
-            if filedata is False:
+            except Exception as e:
+                log.error('Failed to send torrent to qBittorrent: %s', e)
                 return False
 
-            data['protocol'] = 'torrent'
+        if data.get('protocol')  == 'torrent':
+             info = bdecode(filedata)["info"]
+             torrent_hash = sha1(bencode(info)).hexdigest()
 
-        info = bdecode(filedata)["info"]
-        torrent_hash = sha1(bencode(info)).hexdigest()
+             # Convert base 32 to hex
+             if len(torrent_hash) == 32:
+                torrent_hash = b16encode(b32decode(torrent_hash))
 
-        # Convert base 32 to hex
-        if len(torrent_hash) == 32:
-            torrent_hash = b16encode(b32decode(torrent_hash))
-
-        # Send request to qBittorrent
-        try:
-            self.qb.add_file(filedata)
-
-            return self.downloadReturnId(torrent_hash)
-        except Exception as e:
-            log.error('Failed to send torrent to qBittorrent: %s', e)
-            return False
+             # Send request to qBittorrent
+             try:
+                self.qb.download_from_file(filedata, label=self.conf('label'))
+                log.info('Torrent [file] sent to QBittorrent successfully.')
+                return self.downloadReturnId(torrent_hash)
+             except Exception as e:
+                log.error('Failed to send torrent to qBittorrent: %s', e)
+                return False
 
     def getTorrentStatus(self, torrent):
 
-        if torrent.state in ('uploading', 'queuedUP', 'stalledUP'):
+        if torrent['state'] in ('uploading', 'queuedUP', 'stalledUP'):
             return 'seeding'
 
-        if torrent.progress == 1:
+        if torrent['progress'] == 1:
             return 'completed'
 
         return 'busy'
 
     def getAllDownloadStatus(self, ids):
+        """ Get status of all active downloads
+
+        :param ids: list of (mixed) downloader ids
+            Used to match the releases for this downloader as there could be
+            other downloaders active that it should ignore
+        :return: list of releases
+        """
+
         log.debug('Checking qBittorrent download status.')
 
         if not self.connect():
             return []
 
         try:
-            torrents = self.qb.get_torrents()
+            torrents = self.qb.torrents(status='all', label=self.conf('label'))
 
             release_downloads = ReleaseDownloadList(self)
 
             for torrent in torrents:
-                if torrent.hash in ids:
-                    torrent.update_general() # get extra info
-                    torrent_filelist = torrent.get_files()
+                if torrent['hash'] in ids:
+                    torrent_filelist = self.qb.get_torrent_files(torrent['hash'])
 
                     torrent_files = []
-                    torrent_dir = os.path.join(torrent.save_path, torrent.name)
+                    torrent_dir = os.path.join(torrent['save_path'], torrent['name'])
 
                     if os.path.isdir(torrent_dir):
-                        torrent.save_path = torrent_dir
+                        torrent['save_path'] = torrent_dir
 
                     if len(torrent_filelist) > 1 and os.path.isdir(torrent_dir): # multi file torrent, path.isdir check makes sure we're not in the root download folder
-                        for root, _, files in os.walk(torrent.save_path):
+                        for root, _, files in os.walk(torrent['save_path']):
                             for f in files:
                                 torrent_files.append(sp(os.path.join(root, f)))
 
                     else: # multi or single file placed directly in torrent.save_path
                         for f in torrent_filelist:
-                            file_path = os.path.join(torrent.save_path, f.name)
+                            file_path = os.path.join(torrent['save_path'], f['name'])
                             if os.path.isfile(file_path):
                                 torrent_files.append(sp(file_path))
 
                     release_downloads.append({
-                        'id': torrent.hash,
-                        'name': torrent.name,
+                        'id': torrent['hash'],
+                        'name': torrent['name'],
                         'status': self.getTorrentStatus(torrent),
-                        'seed_ratio': torrent.ratio,
-                        'original_status': torrent.state,
-                        'timeleft': torrent.progress * 100 if torrent.progress else -1, # percentage
-                        'folder': sp(torrent.save_path),
+                        'seed_ratio': torrent['ratio'],
+                        'original_status': torrent['state'],
+                        'timeleft': str(timedelta(seconds = torrent['eta'])),
+                        'folder': sp(torrent['save_path']),
                         'files': torrent_files
                     })
 
@@ -153,8 +177,8 @@ class qBittorrent(DownloaderBase):
             return False
 
         if pause:
-            return torrent.pause()
-        return torrent.resume()
+            return self.qb.pause(release_download['id'])
+        return self.qb.resume(release_download['id'])
 
     def removeFailed(self, release_download):
         log.info('%s failed downloading, deleting...', release_download['name'])
@@ -167,15 +191,15 @@ class qBittorrent(DownloaderBase):
         if not self.connect():
             return False
 
-        torrent = self.qb.find_torrent(release_download['id'])
+        torrent = self.qb.get_torrent(release_download['id'])
 
         if torrent is None:
             return False
 
         if delete_files:
-            torrent.delete() # deletes torrent with data
+            self.qb.delete_permanently(release_download['id']) # deletes torrent with data
         else:
-            torrent.remove() # just removes the torrent, doesn't delete data
+            self.qb.delete(release_download['id']) # just removes the torrent, doesn't delete data
 
         return True
 
@@ -187,8 +211,8 @@ config = [{
             'tab': 'downloaders',
             'list': 'download_providers',
             'name': 'qbittorrent',
-            'label': 'qbittorrent',
-            'description': '',
+            'label': 'qBittorrent',
+            'description': 'Use <a href="http://www.qbittorrent.org/" target="_blank">qBittorrent</a> to download torrents.',
             'wizard': True,
             'options': [
                 {
@@ -208,6 +232,11 @@ config = [{
                 {
                     'name': 'password',
                     'type': 'password',
+                },
+                {
+                    'name': 'label',
+                    'label': 'Torrent Label',
+                    'default': 'couchpotato',
                 },
                 {
                     'name': 'remove_complete',

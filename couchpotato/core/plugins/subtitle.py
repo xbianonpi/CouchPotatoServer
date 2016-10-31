@@ -16,7 +16,7 @@ autoload = 'Subtitle'
 
 class Subtitle(Plugin):
 
-    services = ['opensubtitles', 'thesubdb', 'subswiki', 'podnapisi']
+    services = ['opensubtitles', 'thesubdb', 'subswiki', 'subscenter']
 
     def __init__(self):
         addEvent('renamer.before', self.searchSingle)
@@ -70,7 +70,7 @@ config = [{
                 },
                 {
                     'name': 'languages',
-                    'description': ('Comma separated, 2 letter country code.', 'Example: en, nl. See the codes at <a href="http://en.wikipedia.org/wiki/List_of_ISO_639-1_codes">on Wikipedia</a>'),
+                    'description': ('Comma separated, 2 letter country code.', 'Example: en, nl. See the codes at <a href="http://en.wikipedia.org/wiki/List_of_ISO_639-1_codes" target="_blank">on Wikipedia</a>'),
                 },
                 {
                     'advanced': True,

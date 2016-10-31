@@ -23,7 +23,9 @@ import requests
 from requests.packages.urllib3 import disable_warnings
 from tornado.httpserver import HTTPServer
 from tornado.web import Application, StaticFileHandler, RedirectHandler
-
+from couchpotato.core.softchroot import SoftChrootInitError
+try: from tornado.netutil import bind_unix_socket
+except: pass
 
 def getOptions(args):
 
@@ -216,6 +218,19 @@ def runCouchPotato(options, base_path, args, data_dir = None, log_dir = None, En
     log = CPLog(__name__)
     log.debug('Started with options %s', options)
 
+    # Check soft-chroot dir exists:
+    try:
+        # Load Soft-Chroot
+        soft_chroot = Env.get('softchroot')
+        soft_chroot_dir = Env.setting('soft_chroot', section = 'core', default = None, type='unicode' )
+        soft_chroot.initialize(soft_chroot_dir)
+    except SoftChrootInitError as exc:
+        log.error(exc)
+        return
+    except:
+        log.error('Unable to check whether SOFT-CHROOT is defined')
+        return
+
     # Check available space
     try:
         total_space, available_space = getFreeSpace(data_dir)
@@ -244,11 +259,13 @@ def runCouchPotato(options, base_path, args, data_dir = None, log_dir = None, En
 
     # Basic config
     host = Env.setting('host', default = '0.0.0.0')
-    # app.debug = development
+    host6 = Env.setting('host6', default = '::')
+
     config = {
         'use_reloader': reloader,
         'port': tryInt(Env.setting('port', default = 5050)),
         'host': host if host and len(host) > 0 else '0.0.0.0',
+        'host6': host6 if host6 and len(host6) > 0 else '::',
         'ssl_cert': Env.setting('ssl_cert', default = None),
         'ssl_key': Env.setting('ssl_key', default = None),
     }
@@ -330,7 +347,15 @@ def runCouchPotato(options, base_path, args, data_dir = None, log_dir = None, En
 
     while try_restart:
         try:
-            server.listen(config['port'], config['host'])
+            if config['host'].startswith('unix:'):
+                server.add_socket(bind_unix_socket(config['host'][5:]))
+            else:
+                server.listen(config['port'], config['host'])
+
+                if Env.setting('ipv6', default = False):
+                    try: server.listen(config['port'], config['host6'])
+                    except: log.info2('Tried to bind to IPV6 but failed')
+
             loop.start()
             server.close_all_connections()
             server.stop()

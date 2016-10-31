@@ -51,6 +51,32 @@ class rTorrent(DownloaderBase):
         self.rt = None
         return True
 
+    def getAuth(self):
+        if not self.conf('username') or not self.conf('password'):
+            # Missing username or password parameter
+            return None
+
+        # Build authentication tuple
+        return (
+            self.conf('authentication'),
+            self.conf('username'),
+            self.conf('password')
+        )
+
+    def getVerifySsl(self):
+        # Ensure verification has been enabled
+        if not self.conf('ssl_verify'):
+            return False
+
+        # Use ca bundle if defined
+        ca_bundle = self.conf('ssl_ca_bundle')
+
+        if ca_bundle and os.path.exists(ca_bundle):
+            return ca_bundle
+
+        # Use default ssl verification
+        return True
+
     def connect(self, reconnect = False):
         # Already connected?
         if not reconnect and self.rt is not None:
@@ -68,15 +94,15 @@ class rTorrent(DownloaderBase):
         if parsed.scheme in ['http', 'https']:
             url += self.conf('rpc_url')
 
+        # Construct client
         self.rt = RTorrent(
-            url,
-            self.conf('username'),
-            self.conf('password')
+            url, self.getAuth(),
+            verify_ssl=self.getVerifySsl()
         )
 
         self.error_msg = ''
         try:
-            self.rt._verify_conn()
+            self.rt.connection.verify()
         except AssertionError as e:
             self.error_msg = e.message
             self.rt = None
@@ -84,6 +110,10 @@ class rTorrent(DownloaderBase):
         return self.rt
 
     def test(self):
+        """ Check if connection works
+        :return: bool
+        """
+
         if self.connect(True):
             return True
 
@@ -94,6 +124,20 @@ class rTorrent(DownloaderBase):
 
 
     def download(self, data = None, media = None, filedata = None):
+        """ Send a torrent/nzb file to the downloader
+
+        :param data: dict returned from provider
+            Contains the release information
+        :param media: media dict with information
+            Used for creating the filename when possible
+        :param filedata: downloaded torrent/nzb filedata
+            The file gets downloaded in the searcher and send to this function
+            This is done to have failed checking before using the downloader, so the downloader
+            doesn't need to worry about that
+        :return: boolean
+            One faile returns false, but the downloaded should log his own errors
+        """
+
         if not media: media = {}
         if not data: data = {}
 
@@ -161,6 +205,14 @@ class rTorrent(DownloaderBase):
         return 'completed'
 
     def getAllDownloadStatus(self, ids):
+        """ Get status of all active downloads
+
+        :param ids: list of (mixed) downloader ids
+            Used to match the releases for this downloader as there could be
+            other downloaders active that it should ignore
+        :return: list of releases
+        """
+
         log.debug('Checking rTorrent download status.')
 
         if not self.connect():
@@ -254,7 +306,7 @@ config = [{
             'list': 'download_providers',
             'name': 'rtorrent',
             'label': 'rTorrent',
-            'description': '',
+            'description': 'Use <a href="https://rakshasa.github.io/rtorrent/" target="_blank">rTorrent</a> to download torrents.',
             'wizard': True,
             'options': [
                 {
@@ -264,52 +316,88 @@ config = [{
                     'radio_group': 'torrent',
                 },
                 {
-                    'name': 'host',
-                    'default': 'localhost:80',
-                    'description': 'RPC Communication URI. Usually <strong>scgi://localhost:5000</strong>, '
-                                   '<strong>httprpc://localhost/rutorrent</strong> or <strong>localhost:80</strong>'
-                },
-                {
                     'name': 'ssl',
+                    'label': 'SSL Enabled',
+                    'order': 1,
                     'default': 0,
                     'type': 'bool',
                     'advanced': True,
                     'description': 'Use HyperText Transfer Protocol Secure, or <strong>https</strong>',
                 },
                 {
-                    'name': 'rpc_url',
+                    'name': 'ssl_verify',
+                    'label': 'SSL Verify',
+                    'order': 2,
+                    'default': 1,
+                    'type': 'bool',
+                    'advanced': True,
+                    'description': 'Verify SSL certificate on https connections',
+                },
+                {
+                    'name': 'ssl_ca_bundle',
+                    'label': 'SSL CA Bundle',
+                    'order': 3,
                     'type': 'string',
+                    'advanced': True,
+                    'description': 'Path to a directory (or file) containing trusted certificate authorities',
+                },
+                {
+                    'name': 'host',
+                    'order': 4,
+                    'default': 'localhost:80',
+                    'description': 'RPC Communication URI. Usually <strong>scgi://localhost:5000</strong>, '
+                                   '<strong>httprpc://localhost/rutorrent</strong> or <strong>localhost:80</strong>',
+                },
+                {
+                    'name': 'rpc_url',
+                    'order': 5,
                     'default': 'RPC2',
+                    'type': 'string',
                     'advanced': True,
                     'description': 'Change if your RPC mount is at a different path.',
                 },
                 {
+                    'name': 'authentication',
+                    'order': 6,
+                    'default': 'basic',
+                    'type': 'dropdown',
+                    'advanced': True,
+                    'values': [('Basic', 'basic'), ('Digest', 'digest')],
+                    'description': 'Authentication method used for http(s) connections',
+                },
+                {
                     'name': 'username',
+                    'order': 7,
                 },
                 {
                     'name': 'password',
+                    'order': 8,
                     'type': 'password',
                 },
                 {
                     'name': 'label',
+                    'order': 9,
                     'description': 'Label to apply on added torrents.',
                 },
                 {
                     'name': 'directory',
+                    'order': 10,
                     'type': 'directory',
                     'description': 'Download to this directory. Keep empty for default rTorrent download directory.',
                 },
                 {
                     'name': 'remove_complete',
                     'label': 'Remove torrent',
+                    'order': 11,
                     'default': False,
-                    'advanced': True,
                     'type': 'bool',
+                    'advanced': True,
                     'description': 'Remove the torrent after it finishes seeding.',
                 },
                 {
                     'name': 'delete_files',
                     'label': 'Remove files',
+                    'order': 12,
                     'default': True,
                     'type': 'bool',
                     'advanced': True,
@@ -317,6 +405,7 @@ config = [{
                 },
                 {
                     'name': 'paused',
+                    'order': 13,
                     'type': 'bool',
                     'advanced': True,
                     'default': False,
@@ -324,6 +413,7 @@ config = [{
                 },
                 {
                     'name': 'manual',
+                    'order': 14,
                     'default': 0,
                     'type': 'bool',
                     'advanced': True,
