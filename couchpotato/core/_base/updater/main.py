@@ -7,11 +7,12 @@ import traceback
 import zipfile
 from datetime import datetime
 from threading import RLock
+import re
 
 from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent, fireEventAsync
 from couchpotato.core.helpers.encoding import sp
-from couchpotato.core.helpers.variable import removePyc
+from couchpotato.core.helpers.variable import removePyc, tryInt
 from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.environment import Env
@@ -28,13 +29,17 @@ class Updater(Plugin):
 
     available_notified = False
     _lock = RLock()
+    last_check = 'updater.last_checked'
 
     def __init__(self):
 
         if Env.get('desktop'):
             self.updater = DesktopUpdater()
         elif os.path.isdir(os.path.join(Env.get('app_dir'), '.git')):
-            self.updater = GitUpdater(self.conf('git_command', default = 'git'))
+            git_default = 'git'
+            git_command = self.conf('git_command', default = git_default)
+            git_command = git_command if git_command != git_default and (os.path.isfile(git_command) or re.match('^[a-zA-Z0-9_/\.\-]+$', git_command)) else git_default
+            self.updater = GitUpdater(git_command)
         else:
             self.updater = SourceUpdater()
 
@@ -68,11 +73,24 @@ class Updater(Plugin):
 
         fireEvent('schedule.remove', 'updater.check', single = True)
         if self.isEnabled():
-            fireEvent('schedule.interval', 'updater.check', self.autoUpdate, hours = 6)
+            fireEvent('schedule.interval', 'updater.check', self.autoUpdate, hours = 24)
             self.autoUpdate()  # Check after enabling
 
     def autoUpdate(self):
-        if self.isEnabled() and self.check() and self.conf('automatic') and not self.updater.update_failed:
+        do_check = True
+
+        try:
+            last_check = tryInt(Env.prop(self.last_check, default = 0))
+            now = tryInt(time.time())
+            do_check = last_check < now - 43200
+
+            if do_check:
+                Env.prop(self.last_check, value = now)
+        except:
+            log.error('Failed checking last time to update: %s', traceback.format_exc())
+
+        if do_check and self.isEnabled() and self.check() and self.conf('automatic') and not self.updater.update_failed:
+
             if self.updater.doUpdate():
 
                 # Notify before restarting
@@ -159,7 +177,6 @@ class BaseUpdater(Plugin):
     update_failed = False
     update_version = None
     last_check = 0
-    auto_register_static = False
 
     def doUpdate(self):
         pass
@@ -185,8 +202,18 @@ class BaseUpdater(Plugin):
 
 class GitUpdater(BaseUpdater):
 
+    old_repo = 'RuudBurger/CouchPotatoServer'
+    new_repo = 'xbianonpi/CouchPotatoServer'
+
     def __init__(self, git_command):
         self.repo = LocalRepository(Env.get('app_dir'), command = git_command)
+
+        remote_name = 'origin'
+        remote = self.repo.getRemoteByName(remote_name)
+        if self.old_repo in remote.url:
+            log.info('Changing repo to new github organization: %s -> %s', (self.old_repo, self.new_repo))
+            new_url = remote.url.replace(self.old_repo, self.new_repo)
+            self.repo._executeGitCommandAssertSuccess("remote set-url %s %s" % (remote_name, new_url))
 
     def doUpdate(self):
 

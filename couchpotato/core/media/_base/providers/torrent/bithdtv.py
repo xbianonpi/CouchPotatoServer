@@ -18,10 +18,12 @@ class Base(TorrentProvider):
         'login_check': 'https://www.bit-hdtv.com/messages.php',
         'detail': 'https://www.bit-hdtv.com/details.php?id=%s',
         'search': 'https://www.bit-hdtv.com/torrents.php?',
+        'download': 'https://www.bit-hdtv.com/download.php?id=%s',
     }
 
     # Searches for movies only - BiT-HDTV's subcategory and resolution search filters appear to be broken
     http_time_between_calls = 1  # Seconds
+    login_fail_msg = 'Username or password incorrect.'
 
     def _search(self, media, quality, results):
 
@@ -49,12 +51,12 @@ class Base(TorrentProvider):
 
                     cells = result.find_all('td')
                     link = cells[2].find('a')
-                    torrent_id = link['href'].replace('/details.php?id=', '')
+                    torrent_id = link['href'].split('id=')[1]
 
                     results.append({
                         'id': torrent_id,
                         'name': link.contents[0].get_text(),
-                        'url': cells[0].find('a')['href'],
+                        'url': self.urls['download'] % torrent_id,
                         'detail_url': self.urls['detail'] % torrent_id,
                         'size': self.parseSize(cells[6].get_text()),
                         'seeders': tryInt(cells[8].string),
@@ -93,7 +95,7 @@ config = [{
             'tab': 'searcher',
             'list': 'torrent_providers',
             'name': 'BiT-HDTV',
-            'description': '<a href="https://bit-hdtv.com">BiT-HDTV</a>',
+            'description': '<a href="https://bit-hdtv.com" target="_blank">BiT-HDTV</a>',
             'wizard': True,
             'icon': 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAABnRSTlMAAAAAAABupgeRAAABMklEQVR4AZ3Qu0ojcQCF8W9MJcQbJNgEEQUbQVIqWgnaWfkIvoCgggixEAmIhRtY2GV3w7KwU61B0EYIxmiw0YCik84ipaCuc0nmP5dcjIUgOjqDvxf4OAdf9mnMLcUJyPyGSCP+YRdC+Kp8iagJKhuS+InYRhTGgDbeV2uEMand4ZRxizjXHQEimxhraAnUr73BNqQxMiNeV2SwcjTLEVtb4Zl10mXutvOWm2otw5Sxz6TGTbdd6ncuYvVLXAXrvM+ruyBpy1S3JLGDfUQ1O6jn5vTsrJXvqSt4UNfj6vxTRPxBHER5QeSirhLGk/5rWN+ffB1XZuxjnDy1q87m7TS+xOGA+Iv4gfkbaw+nOMXHDHnITGEk0VfRFnn4Po4vNYm6RGukmggR0L08+l+e4HMeASo/i6AJUjLgAAAAAElFTkSuQmCC',
             'options': [

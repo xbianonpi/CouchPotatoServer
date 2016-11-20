@@ -31,12 +31,12 @@ class Email(Notification):
         starttls = self.conf('starttls')
 
         # Make the basic message
-        message = MIMEText(toUnicode(message), _charset = Env.get('encoding'))
-        message['Subject'] = self.default_title
-        message['From'] = from_address
-        message['To'] = to_address
-        message['Date'] = formatdate(localtime = 1)
-        message['Message-ID'] = make_msgid()
+        email = MIMEText(toUnicode(message), _charset = Env.get('encoding'))
+        email['Subject'] = '%s: %s' % (self.default_title, toUnicode(message))
+        email['From'] = from_address
+        email['To'] = to_address
+        email['Date'] = formatdate(localtime = 1)
+        email['Message-ID'] = make_msgid()
 
         try:
             # Open the SMTP connection, via SSL if requested
@@ -54,11 +54,11 @@ class Email(Notification):
             # Check too see if an login attempt should be attempted
             if len(smtp_user) > 0:
                 log.debug("Logging on to SMTP server using username \'%s\'%s", (smtp_user, " and a password" if len(smtp_pass) > 0 else ""))
-                mailserver.login(smtp_user, smtp_pass)
+                mailserver.login(smtp_user.encode('utf-8'), smtp_pass.encode('utf-8'))
 
             # Send the e-mail
             log.debug("Sending the email")
-            mailserver.sendmail(from_address, splitString(to_address), message.as_string())
+            mailserver.sendmail(from_address, splitString(to_address), email.as_string())
 
             # Close the SMTP connection
             mailserver.quit()

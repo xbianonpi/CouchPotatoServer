@@ -19,11 +19,26 @@ class Synology(DownloaderBase):
     status_support = False
 
     def download(self, data = None, media = None, filedata = None):
+        """
+        Send a torrent/nzb file to the downloader
+
+        :param data: dict returned from provider
+            Contains the release information
+        :param media: media dict with information
+            Used for creating the filename when possible
+        :param filedata: downloaded torrent/nzb filedata
+            The file gets downloaded in the searcher and send to this function
+            This is done to have fail checking before using the downloader, so the downloader
+            doesn't need to worry about that
+        :return: boolean
+            One fail returns false, but the downloader should log his own errors
+        """
+
         if not media: media = {}
         if not data: data = {}
 
         response = False
-        log.error('Sending "%s" (%s) to Synology.', (data['name'], data['protocol']))
+        log.info('Sending "%s" (%s) to Synology.', (data['name'], data['protocol']))
 
         # Load host from config and split out port.
         host = cleanHost(self.conf('host'), protocol = False).split(':')
@@ -50,6 +65,10 @@ class Synology(DownloaderBase):
             return self.downloadReturnId('') if response else False
 
     def test(self):
+        """ Check if connection works
+        :return: bool
+        """
+
         host = cleanHost(self.conf('host'), protocol = False).split(':')
         try:
             srpc = SynologyRPC(host[0], host[1], self.conf('username'), self.conf('password'))
@@ -105,7 +124,7 @@ class SynologyRPC(object):
                 self.sid = response['data']['sid']
                 log.debug('sid=%s', self.sid)
             else:
-                log.error('Couldn\'t login to Synology, %s', response)
+                log.error('Couldn\'t log into Synology, %s', response)
             return response['success']
         else:
             log.error('User or password missing, not using authentication.')
@@ -118,7 +137,7 @@ class SynologyRPC(object):
     def _req(self, url, args, files = None):
         response = {'success': False}
         try:
-            req = requests.post(url, data = args, files = files)
+            req = requests.post(url, data = args, files = files, verify = False)
             req.raise_for_status()
             response = json.loads(req.text)
             if response['success']:
@@ -154,7 +173,22 @@ class SynologyRPC(object):
                 log.info('Login success, adding torrent URI')
                 args['uri'] = url
                 response = self._req(self.download_url, args = args)
-                log.info('Response: %s', response)
+                if response['success']:
+                    log.info('Response: %s', response)
+                else:
+                    log.error('Response: %s', response)
+                    synoerrortype = {
+                        400 : 'File upload failed',
+                        401 : 'Max number of tasks reached',
+                        402 : 'Destination denied',
+                        403 : 'Destination does not exist',
+                        404 : 'Invalid task id',
+                        405 : 'Invalid task action',
+                        406 : 'No default destination',
+                        407 : 'Set destination failed',
+                        408 : 'File does not exist'
+                    }
+                    log.error('DownloadStation returned the following error : %s', synoerrortype[response['error']['code']])
                 result = response['success']
             elif filename and filedata:
                 log.info('Login success, adding torrent')
@@ -180,7 +214,7 @@ config = [{
             'list': 'download_providers',
             'name': 'synology',
             'label': 'Synology',
-            'description': 'Use <a href="http://www.synology.com/dsm/home_home_applications_download_station.php" target="_blank">Synology Download Station</a> to download.',
+            'description': 'Use <a href="https://www.synology.com/en-us/dsm/app_packages/DownloadStation" target="_blank">Synology Download Station</a> to download.',
             'wizard': True,
             'options': [
                 {

@@ -1,7 +1,7 @@
 import traceback
 
 from bs4 import BeautifulSoup
-from couchpotato.core.helpers.encoding import tryUrlencode
+from couchpotato.core.helpers.encoding import tryUrlencode, toUnicode
 from couchpotato.core.helpers.variable import tryInt
 from couchpotato.core.logger import CPLog
 from couchpotato.core.media._base.providers.torrent.base import TorrentProvider
@@ -32,6 +32,7 @@ class Base(TorrentProvider):
     ]
 
     http_time_between_calls = 1  # Seconds
+    login_fail_msg = 'Username or password incorrect'
     cat_backup_id = None
 
     def _searchOnTitle(self, title, movie, quality, results):
@@ -55,12 +56,13 @@ class Base(TorrentProvider):
                     link = cells[1].find('a', attrs = {'class': 'index'})
 
                     full_id = link['href'].replace('details.php?id=', '')
-                    torrent_id = full_id[:6]
+                    torrent_id = full_id[:7]
+                    name = toUnicode(link.get('title', link.contents[0]).encode('ISO-8859-1')).strip()
 
                     results.append({
                         'id': torrent_id,
-                        'name': link.contents[0],
-                        'url': self.urls['download'] % (torrent_id, link.contents[0]),
+                        'name': name,
+                        'url': self.urls['download'] % (torrent_id, name),
                         'detail_url': self.urls['detail'] % torrent_id,
                         'size': self.parseSize(cells[6].contents[0] + cells[6].contents[2]),
                         'seeders': tryInt(cells[8].find('span').contents[0]),
@@ -90,7 +92,7 @@ config = [{
             'tab': 'searcher',
             'list': 'torrent_providers',
             'name': 'TorrentBytes',
-            'description': '<a href="http://torrentbytes.net">TorrentBytes</a>',
+            'description': '<a href="http://torrentbytes.net" target="_blank">TorrentBytes</a>',
             'wizard': True,
             'icon': 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAeFBMVEUAAAAAAEQAA1QAEmEAKnQALHYAMoEAOokAQpIASYsASZgAS5UATZwATosATpgAVJ0AWZwAYZ4AZKAAaZ8Ab7IAcbMAfccAgcQAgcsAhM4AiscAjMkAmt0AoOIApecAp/EAqvQAs+kAt+wA3P8A4f8A//8VAAAfDbiaAl08AAAAjUlEQVQYGQXBO04DQRAFwHqz7Z8sECIl5f73ISRD5GBs7UxTlWfg9vYXnvJRQJqOL88D6BAwJtMMumHUVCl60aa6H93IrIv0b+157f1lpk+fm87lMWrZH0vncKbXdRUQrRmrh9C6Iwkq6rg4PXZcyXmbizzeV/g+rDra0rGve8jPKLSOJNi2AQAwAGjwD7ApPkEHdtPQAAAAAElFTkSuQmCC',
             'options': [

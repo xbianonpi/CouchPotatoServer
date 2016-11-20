@@ -342,7 +342,7 @@ class Release(Plugin):
                 db.update(rls)
 
             log_movie = '%s (%s) in %s' % (getTitle(media), media['info'].get('year'), rls['quality'])
-            snatch_message = 'Snatched "%s": %s' % (data.get('name'), log_movie)
+            snatch_message = 'Snatched "%s": %s from %s' % (data.get('name'), log_movie, (data.get('provider', '') + data.get('provider_extra', '')))
             log.info(snatch_message)
             fireEvent('%s.snatched' % data['type'], message = snatch_message, data = media)
 
@@ -390,11 +390,11 @@ class Release(Plugin):
                 continue
 
             if rel['score'] < quality_custom.get('minimum_score'):
-                log.info('Ignored, score "%s" to low, need at least "%s": %s', (rel['score'], quality_custom.get('minimum_score'), rel['name']))
+                log.info('Ignored, score "%s" too low, need at least "%s": %s', (rel['score'], quality_custom.get('minimum_score'), rel['name']))
                 continue
 
             if rel['size'] <= 50:
-                log.info('Ignored, size "%sMB" to low: %s', (rel['size'], rel['name']))
+                log.info('Ignored, size "%sMB" too low: %s', (rel['size'], rel['name']))
                 continue
 
             if 'seeders' in rel and rel.get('seeders') < minimum_seeders:
@@ -555,6 +555,8 @@ class Release(Plugin):
                 releases.append(doc)
             except RecordDeleted:
                 pass
+            except (ValueError, EOFError):
+                fireEvent('database.delete_corrupted', r.get('_id'), traceback_error = traceback.format_exc(0))
 
         releases = sorted(releases, key = lambda k: k.get('info', {}).get('score', 0), reverse = True)
 
@@ -563,4 +565,4 @@ class Release(Plugin):
         if download_preference != 'both':
             releases = sorted(releases, key = lambda k: k.get('info', {}).get('protocol', '')[:3], reverse = (download_preference == 'torrent'))
 
-        return releases
+        return releases or []

@@ -25,6 +25,11 @@ class Deluge(DownloaderBase):
     drpc = None
 
     def connect(self, reconnect = False):
+        """ Connect to the delugeRPC, re-use connection when already available
+        :param reconnect: force reconnect
+        :return: DelugeRPC instance
+        """
+
         # Load host from config and split out port.
         host = cleanHost(self.conf('host'), protocol = False).split(':')
 
@@ -42,6 +47,20 @@ class Deluge(DownloaderBase):
         return self.drpc
 
     def download(self, data = None, media = None, filedata = None):
+        """ Send a torrent/nzb file to the downloader
+
+        :param data: dict returned from provider
+            Contains the release information
+        :param media: media dict with information
+            Used for creating the filename when possible
+        :param filedata: downloaded torrent/nzb filedata
+            The file gets downloaded in the searcher and send to this function
+            This is done to have failed checking before using the downloader, so the downloader
+            doesn't need to worry about that
+        :return: boolean
+            One faile returns false, but the downloaded should log his own errors
+        """
+
         if not media: media = {}
         if not data: data = {}
 
@@ -96,11 +115,21 @@ class Deluge(DownloaderBase):
         return self.downloadReturnId(remote_torrent)
 
     def test(self):
+        """ Check if connection works
+        :return: bool
+        """
         if self.connect(True) and self.drpc.test():
             return True
         return False
 
     def getAllDownloadStatus(self, ids):
+        """ Get status of all active downloads
+
+        :param ids: list of (mixed) downloader ids
+            Used to match the releases for this downloader as there could be
+            other downloaders active that it should ignore
+        :return: list of releases
+        """
 
         log.debug('Checking Deluge download status.')
 
@@ -127,7 +156,10 @@ class Deluge(DownloaderBase):
             # Deluge has no easy way to work out if a torrent is stalled or failing.
             #status = 'failed'
             status = 'busy'
-            if torrent['is_seed'] and tryFloat(torrent['ratio']) < tryFloat(torrent['stop_ratio']):
+            # If an user opts to seed a torrent forever (usually associated to private trackers usage), stop_ratio will be 0 or -1 (depending on Deluge version).
+            # In this scenario the status of the torrent would never change from BUSY to SEEDING.
+            # The last check takes care of this case.
+            if torrent['is_seed'] and ((tryFloat(torrent['ratio']) < tryFloat(torrent['stop_ratio'])) or (tryFloat(torrent['stop_ratio']) <= 0)):
                 # We have torrent['seeding_time'] to work out what the seeding time is, but we do not
                 # have access to the downloader seed_time, as with deluge we have no way to pass it
                 # when the torrent is added. So Deluge will only look at the ratio.

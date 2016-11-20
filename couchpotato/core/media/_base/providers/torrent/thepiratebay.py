@@ -2,6 +2,7 @@ import re
 import traceback
 
 from bs4 import BeautifulSoup
+from couchpotato.core.event import addEvent
 from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import tryInt
 from couchpotato.core.logger import CPLog
@@ -24,19 +25,41 @@ class Base(TorrentMagnetProvider):
     http_time_between_calls = 0
 
     proxy_list = [
-        'https://dieroschtibay.org',
-        'https://thebay.al',
-        'https://thepiratebay.se',
-        'http://thepiratebay.se.net',
-        'http://thebootlegbay.com',
-        'http://tpb.ninja.so',
-        'http://proxybay.fr',
-        'http://pirateproxy.in',
-        'http://piratebay.skey.sk',
-        'http://pirateproxy.be',
-        'http://bayproxy.li',
-        'http://proxybay.pw',
+        'https://thepiratebay.mn',
+        'https://thepiratebay.gd',
+        'https://thepiratebay.la',
+        'https://pirateproxy.sx',
+        'https://piratebay.host',
+        'https://thepiratebay.expert',
+        'https://pirateproxy.wf',
+        'https://pirateproxy.tf',
+        'https://urbanproxy.eu',
+        'https://pirate.guru',
+        'https://piratebays.co',
+        'https://pirateproxy.yt',
+        'https://thepiratebay.uk.net',
+        'https://tpb.ninja',
+        'https://thehiddenbay.me',
+        'https://ukunlocked.com',
+        'https://thebay.tv',
+        'https://tpb.freed0m4all.net',
+        'https://piratebays.eu',
+        'https://thepirateproxy.co',
+        'https://thepiratebayz.com',
+        'https://zaatoka.eu',
+        'https://piratemirror.net',
+        'https://theproxypirate.pw',
+        'https://torrentdr.com',
+        'https://tpbproxy.co',
+        'https://arrr.xyz',
+        'https://www.cleantpbproxy.com',
+        'http://tpb.dashitz.com',
     ]
+
+    def __init__(self):
+        super(Base, self).__init__()
+
+        addEvent('app.test', self.doTest)
 
     def _search(self, media, quality, results):
 
@@ -78,6 +101,13 @@ class Base(TorrentMagnetProvider):
                             continue
 
                         if link and download:
+                            if self.conf('trusted_only'):
+                                if result.find('img', alt = re.compile('Trusted')) is None and \
+                                                result.find('img', alt = re.compile('VIP')) is None and \
+                                                result.find('img', alt = re.compile('Helpers')) is None and \
+                                                result.find('img', alt = re.compile('Moderator')) is None:
+                                    log.info('Skipped torrent %s, untrusted.' % link.string)
+                                    continue
 
                             def extra_score(item):
                                 trusted = (0, 10)[result.find('img', alt = re.compile('Trusted')) is not None]
@@ -121,6 +151,18 @@ class Base(TorrentMagnetProvider):
         item['description'] = description
         return item
 
+    def doTest(self):
+
+        for url in self.proxy_list:
+            try:
+                data = self.urlopen(url + '/search/test+search')
+
+                if 'value="test+search"' in data:
+                    log.info('Success %s', url)
+                    continue
+            except:
+                log.error('%s', traceback.format_exc(0))
+
 
 config = [{
     'name': 'thepiratebay',
@@ -129,7 +171,7 @@ config = [{
             'tab': 'searcher',
             'list': 'torrent_providers',
             'name': 'ThePirateBay',
-            'description': 'The world\'s largest bittorrent tracker. <a href="http://fucktimkuik.org/">ThePirateBay</a>',
+            'description': 'The world\'s largest bittorrent tracker. <a href="https://thepiratebay.se/" target="_blank">ThePirateBay</a>',
             'wizard': True,
             'icon': 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAAAAAA6mKC9AAAA3UlEQVQY02P4DwT/YADIZvj//7qnozMYODmtAAusZoCDELDAegYGViZhAWZmRoYoqIDupfhNN1M3dTBEggXWMZg9jZRXV77YxhAOFpjDwMAPMoCXmcHsF1SAQZ6bQY2VgUEbKHClcAYzg3mINEO8jSCD478/DPsZmvqWblu1bOmStes3Pp0ezVDF4Gif0Hfx9///74/ObRZ2YNiZ47C8XIRBxFJR0jbSSUud4f9zAQWn8NTuziAt2zy5xIMM/z8LFX0E+fD/x0MRDCeA1v7Z++Y/FDzyvAtyBxIA+h8A8ZKLeT+lJroAAAAASUVORK5CYII=',
             'options': [
@@ -165,6 +207,14 @@ config = [{
                     'type': 'int',
                     'default': 0,
                     'description': 'Starting score for each release found via this provider.',
+                },
+                {
+                    'name': 'trusted_only',
+                    'advanced': True,
+                    'label': 'Trusted/VIP Only',
+                    'type': 'bool',
+                    'default': False,
+                    'description': 'Only download releases marked as Trusted or VIP'
                 }
             ],
         }

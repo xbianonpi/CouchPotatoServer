@@ -394,8 +394,9 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
                 log.info('Trying next release for: %s', getTitle(media))
                 self.single(media, manual = manual, force_download = force_download)
 
-            return True
-
+                return True
+            
+            return False
         except:
             log.error('Failed searching for next release: %s', traceback.format_exc())
             return False
@@ -451,7 +452,7 @@ config = [{
                     'advanced': True,
                     'default': '*',
                     'type': 'string',
-                    'description': '<strong>*</strong>: Every day, <strong>*/2</strong>: Every 2 days, <strong>1</strong>: Every first of the month. See <a href="http://packages.python.org/APScheduler/cronschedule.html">APScheduler</a> for details.',
+                    'description': '<strong>*</strong>: Every day, <strong>*/2</strong>: Every 2 days, <strong>1</strong>: Every first of the month. See <a href="https://apscheduler.readthedocs.org/en/latest/modules/triggers/cron.html" target="_blank">APScheduler</a> for details.',
                 },
                 {
                     'name': 'cron_hour',
